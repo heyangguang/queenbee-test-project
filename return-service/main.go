@@ -16,12 +16,12 @@ type ReturnResponse struct {
 	Message string `json:"message"`
 }
 
-// BorrowRecord 借阅记录（模拟数据）
+// BorrowRecord 借阅记录（测试数据，生产环境需使用数据库）
 var borrowRecords = map[int]map[string]interface{}{
 	1: {"book_id": 1, "user_id": 1, "borrow_date": "2026-02-01", "return_date": nil},
 }
 
-// BookStock 图书库存（模拟数据）
+// BookStock 图书库存（测试数据，生产环境需使用数据库）
 var bookStock = map[int]int{
 	1: 5,
 }
@@ -41,6 +41,11 @@ func returnHandler(w http.ResponseWriter, r *http.Request) {
 	var req ReturnRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		respondError(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	if req.BorrowID <= 0 {
+		respondError(w, "Invalid borrow_id", http.StatusBadRequest)
 		return
 	}
 
