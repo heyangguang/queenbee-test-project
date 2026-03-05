@@ -1,100 +1,105 @@
 package main
 
 import (
-	"bytes"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 )
 
-// resetTestData 重置测试数据，确保测试隔离
-func resetTestData() {
-	borrowRecords = map[int]map[string]interface{}{
-		1: {"book_id": 1, "user_id": 1, "borrow_date": "2026-02-01", "return_date": nil},
+func TestReturnBook(t *testing.T) {
+	mu.Lock()
+	borrowRecords = make(map[int]*BorrowRecord)
+	bookStock = make(map[int]int)
+	borrowRecords[1] = &BorrowRecord{
+		ID:         1,
+		BookID:     1,
+		UserID:     1,
+		BorrowDate: time.Now().AddDate(0, 0, -10),
+		DueDate:    time.Now().AddDate(0, 0, 20),
 	}
-	bookStock = map[int]int{
-		1: 5,
-	}
-}
+	bookStock[1] = 5
+	mu.Unlock()
 
-func TestReturnHandler(t *testing.T) {
-	resetTestData()
-	// 测试成功归还
-	req := ReturnRequest{BorrowID: 1}
-	body, _ := json.Marshal(req)
-	r := httptest.NewRequest(http.MethodPost, "/api/return", bytes.NewReader(body))
+	req := httptest.NewRequest(http.MethodPut, "/api/borrows/1/return", nil)
 	w := httptest.NewRecorder()
-
-	returnHandler(w, r)
+	returnHandler(w, req)
 
 	if w.Code != http.StatusOK {
 		t.Errorf("Expected status 200, got %d", w.Code)
 	}
 
-	// 测试重复归还
-	r2 := httptest.NewRequest(http.MethodPost, "/api/return", bytes.NewReader(body))
-	w2 := httptest.NewRecorder()
+	var record BorrowRecord
+	json.NewDecoder(w.Body).Decode(&record)
 
-	returnHandler(w2, r2)
+	if record.ReturnDate == nil {
+		t.Error("ReturnDate should not be nil")
+	}
 
-	if w2.Code != http.StatusBadRequest {
-		t.Errorf("Expected status 400 for duplicate return, got %d", w2.Code)
+	if record.IsOverdue {
+		t.Error("Should not be overdue")
+	}
+
+	if bookStock[1] != 6 {
+		t.Errorf("Expected stock 6, got %d", bookStock[1])
 	}
 }
 
-func TestReturnHandler_NotFound(t *testing.T) {
-	resetTestData()
-	req := ReturnRequest{BorrowID: 999}
-	body, _ := json.Marshal(req)
-	r := httptest.NewRequest(http.MethodPost, "/api/return", bytes.NewReader(body))
+func TestReturnOverdueBook(t *testing.T) {
+	mu.Lock()
+	borrowRecords = make(map[int]*BorrowRecord)
+	borrowRecords[2] = &BorrowRecord{
+		ID:         2,
+		BookID:     1,
+		UserID:     1,
+		BorrowDate: time.Now().AddDate(0, 0, -40),
+		DueDate:    time.Now().AddDate(0, 0, -10),
+	}
+	bookStock[1] = 5
+	mu.Unlock()
+
+	req := httptest.NewRequest(http.MethodPut, "/api/borrows/2/return", nil)
 	w := httptest.NewRecorder()
+	returnHandler(w, req)
 
-	returnHandler(w, r)
+	var record BorrowRecord
+	json.NewDecoder(w.Body).Decode(&record)
 
-	if w.Code != http.StatusNotFound {
-		t.Errorf("Expected status 404, got %d", w.Code)
+	if !record.IsOverdue {
+		t.Error("Should be overdue")
 	}
 }
 
-func TestReturnHandler_InvalidJSON(t *testing.T) {
-	resetTestData()
-	r := httptest.NewRequest(http.MethodPost, "/api/return", bytes.NewReader([]byte("invalid json")))
-	w := httptest.NewRecorder()
+func TestReturnAlreadyReturned(t *testing.T) {
+	now := time.Now()
+	mu.Lock()
+	borrowRecords = make(map[int]*BorrowRecord)
+	borrowRecords[3] = &BorrowRecord{
+		ID:         3,
+		BookID:     1,
+		UserID:     1,
+		BorrowDate: time.Now().AddDate(0, 0, -10),
+		DueDate:    time.Now().AddDate(0, 0, 20),
+		ReturnDate: &now,
+	}
+	mu.Unlock()
 
-	returnHandler(w, r)
+	req := httptest.NewRequest(http.MethodPut, "/api/borrows/3/return", nil)
+	w := httptest.NewRecorder()
+	returnHandler(w, req)
 
 	if w.Code != http.StatusBadRequest {
 		t.Errorf("Expected status 400, got %d", w.Code)
 	}
 }
 
-func TestReturnHandler_InvalidMethod(t *testing.T) {
-	resetTestData()
-	r := httptest.NewRequest(http.MethodGet, "/api/return", nil)
+func TestReturnNotFound(t *testing.T) {
+	req := httptest.NewRequest(http.MethodPut, "/api/borrows/999/return", nil)
 	w := httptest.NewRecorder()
+	returnHandler(w, req)
 
-	returnHandler(w, r)
-
-	if w.Code != http.StatusMethodNotAllowed {
-		t.Errorf("Expected status 405, got %d", w.Code)
-	}
-}
-
-func TestReturnHandler_InvalidBorrowID(t *testing.T) {
-	resetTestData()
-	testCases := []int{0, -1, -100}
-
-	for _, borrowID := range testCases {
-		req := ReturnRequest{BorrowID: borrowID}
-		body, _ := json.Marshal(req)
-		r := httptest.NewRequest(http.MethodPost, "/api/return", bytes.NewReader(body))
-		w := httptest.NewRecorder()
-
-		returnHandler(w, r)
-
-		if w.Code != http.StatusBadRequest {
-			t.Errorf("Expected status 400 for borrow_id=%d, got %d", borrowID, w.Code)
-		}
+	if w.Code != http.StatusNotFound {
+		t.Errorf("Expected status 404, got %d", w.Code)
 	}
 }
