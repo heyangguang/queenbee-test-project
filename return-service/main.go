@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"net/http"
+	"sync"
 	"time"
 )
 
@@ -26,6 +27,9 @@ var bookStock = map[int]int{
 	1: 5,
 }
 
+// 并发安全锁
+var mu sync.RWMutex
+
 func main() {
 	http.HandleFunc("/api/return", returnHandler)
 	http.ListenAndServe(":8083", nil)
@@ -43,6 +47,15 @@ func returnHandler(w http.ResponseWriter, r *http.Request) {
 		respondError(w, "Invalid request body", http.StatusBadRequest)
 		return
 	}
+
+	// 输入验证：borrow_id 必须大于 0
+	if req.BorrowID <= 0 {
+		respondError(w, "Invalid borrow_id", http.StatusBadRequest)
+		return
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
 
 	record, exists := borrowRecords[req.BorrowID]
 	if !exists {
